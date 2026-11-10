@@ -257,7 +257,10 @@ export default {
         provider: 'cloudflare-workers-ai',
       }, 200, headers);
     }
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health' || url.pathname === '/api/health')) {
+    if (request.method === 'GET' && url.pathname === '/') {
+      return Response.redirect(new URL('/cheems.html', request.url).toString(), 302);
+    }
+    if (request.method === 'GET' && (url.pathname === '/health' || url.pathname === '/api/health')) {
       return json({
         ok: true,
         service: 'Cheems Worker',
