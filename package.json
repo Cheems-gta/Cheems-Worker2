@@ -1,0 +1,11 @@
+{
+  "name": "cheems-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/worker.js",
+    "deploy": "npx wrangler@4 deploy",
+    "dev": "npx wrangler@4 dev"
+  }
+}
