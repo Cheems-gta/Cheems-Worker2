@@ -1,57 +1,68 @@
-# Cheems Worker — 免费翻译后端
+# Cheems V11.6 · Cloudflare 免费 AI 翻译
 
-使用 **Cloudflare Workers AI** 的 Meta M2M100 多语言翻译模型，不再依赖腾讯云翻译或腾讯云密钥。项目部署目标是现有 Worker `silent-flower-7f86`。
+**现有 Worker：** `silent-flower-7f86`（保留原来的部署和私人 ACCESS_TOKEN）。
 
-## 免费额度（以 Cloudflare 当前政策为准）
+## 已完成
 
-- Workers AI：**每天 10,000 Neurons 免费额度**，不是无限次翻译。免费方案超出后请求会失败，不会自动按量扣费。
-- Workers Free：通常每天可处理 100,000 次 Worker 请求；AI Neurons 限额通常更先达到。
-- 无需为本后端购买腾讯云翻译服务，也无需配置 `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY`。
-- 需要 Cloudflare Workers AI 服务在账号上可用。
+- 将 **Cheems V11.6** 静态网站上传到仓库 `public/cheems.html`，由 Workers 静态资源托管。
+- 网址：`https://silent-flower-7f86.roggranny.workers.dev/cheems.html`（需确认最新 GitHub 构建已完成）。
+- 用 Cloudflare Workers AI 的 `@cf/meta/m2m100-1.2b` 模型翻译，不再调用旧版 MyMemory / 腾讯云。
+- 站长可在网站翻译弹窗的「站长模式」**临时输入**私人 ACCESS_TOKEN；网站不会保存它。
+- 访客翻译要先通过 **Cloudflare Turnstile**，后端调用 Siteverify 校验每一个一次性 token，然后按 IP 使用 Workers Rate Limiting binding 限制 6 次/分钟（是近似、按机房生效的限制，并非全局严格配额）。
+- 访客每次最多 500 字符，站长最多 5000 字符；每日免费 AI 计算额度有限。
+- 保留离线中英词句翻译和其他网页工具、液态玻璃设计。
 
-官方资料：[Workers AI 价格](https://developers.cloudflare.com/workers-ai/platform/pricing/)、[M2M100 模型](https://developers.cloudflare.com/workers-ai/models/m2m100-1.2b/)。
+## 第一步：确认部署
 
-## 从 GitHub 部署到已有 Worker
+Workers & Pages → `silent-flower-7f86` → 部署。最新仓库提交构建成功后：
 
-1. Cloudflare → **Workers & Pages** → `silent-flower-7f86` → **Settings** → **Builds** → **Connect**。
-2. 连接 GitHub 仓库 `Cheems-gta/Cheems-Worker2`，生产分支 `main`，仓库根目录为项目根目录。
-3. Build command：`npm run check`；Deploy command：`npx wrangler@4 deploy`。
-4. 保存并部署。仓库中的 `wrangler.jsonc` 已配置 `"ai": {"binding":"AI"}`，部署后可由代码直接通过 `env.AI` 调用模型。
+- `/health` 或 `/api/health`：检查 `ok: true`。
+- `/api/config`：检查 `publicEnabled`；未配置 Turnstile 之前应当为 `false`。
+- `/cheems.html`：打开 V11.6 网站，点击「AI 翻译」。
 
-如果已经连接过 GitHub，可在 Cloudflare **Deployments** 检查最近提交是否已自动部署；仓库更新 **不等于** 线上部署成功。
+仅打开页面和私人站长模式不需要 Turnstile。**不要把 ACCESS_TOKEN 写入网页或分享给访客。**
 
-## 安全访问
+## 第二步：免费启用所有访客翻译（需要站长在 Cloudflare 控制台操作）
 
-当前后端默认仅供私人使用。为避免其他人耗尽每日免费额度，需要在 Cloudflare Worker **Settings → Variables and Secrets** 添加：
+1. Cloudflare 控制台 → **Turnstile** → **Add widget**。
+2. 名称可填 `Cheems AI Translation`，类型选 **Managed**，允许的 hostname 填 `silent-flower-7f86.roggranny.workers.dev`（不带 https:// 和路径）。创建后获得 **Site Key** 和 **Secret Key**。
+3. Workers & Pages → `silent-flower-7f86` → **Settings → Variables and Secrets**（运行时，非 Builds 构建变量），在生产环境添加：
+   - `TURNSTILE_SITE_KEY`：**Text**，填写 Site Key（公开标识，允许出现在前端）。
+   - `TURNSTILE_SECRET`：**Secret**，填写 Secret Key（必须保密）。
+4. 按页面提示部署设置，再检查 `/api/config` 是否变为 `publicEnabled: true`。
+5. 访问 `/cheems.html` → 工具箱 → AI 翻译 → 完成安全验证 → 开始翻译。普通访客不需要站长访问口令。
 
-| 名称 | 类型 | 作用 |
-| --- | --- | --- |
-| `ACCESS_TOKEN` | **Secret** | 自己生成的至少 32 位随机访问口令 |
-| `ALLOWED_ORIGINS` | Text，可选 | 允许的网页来源（域名和协议），逗号分隔 |
+站长原有 `ACCESS_TOKEN` 不需要删除，旧腾讯云密钥若存在则已不使用。
 
-**不要**把 `ACCESS_TOKEN` 写入公开仓库、公开 HTML 或发送到聊天中。如果 Cheems 网站未来对所有人开放翻译，需要先接入更适合公开访问的防滥用方案（例如 Turnstile + 服务端验证及限流），再移除私人访问口令。CORS 不能单独作为鉴权。
+## 如需将 HTML 放在另外的域名
 
-旧的腾讯云 Secrets 如不再使用，可到 Cloudflare 控制台删除，避免混淆。
+可直接下载 `public/cheems.html` 上传到自己的域名，但必须在 Worker 运行时设置：
+- `ALLOWED_ORIGINS`：**Text**，完整网站源，如 `https://example.com`（不能用星号）。
+- `TURNSTILE_HOSTNAMES`：**Text**，网站 hostname，如 `example.com`。
+- 在 Turnstile Widget 的允许 hostname 中也添加 `example.com`。
+
+页面按预设 Worker 地址调用跨源 API。使用 `file://` 本地打开时浏览器可能禁止跨域请求。优先使用同域的 `/cheems.html`。
 
 ## 接口
 
-- `GET /`、`GET /health` 或 `GET /api/health` 返回 Worker 状态，以及 `translationConfigured`（仅表示 AI Binding 和 ACCESS_TOKEN 已配置）。
-- `POST /api/translate`：`Content-Type: application/json`，并发送 `Authorization: Bearer <ACCESS_TOKEN>`。
-- 示例请求体：
+- `GET /health`、`GET /api/health`：服务状态。
+- `GET /api/config`：publicEnabled 和公开的 sitekey；不返回 Secret。
+- `POST /api/translate`：JSON `{"text":"Hello","source":"en","target":"zh","turnstileToken":"<per-request token>"}`。
+  - 普通访客必须带 Turnstile token。
+  - 站长可改用 `Authorization: Bearer <ACCESS_TOKEN>`，无需 Turnstile。
+  - 返回 `translatedText` / 语言 / `provider`。
+- `GET /test`：独立的私人翻译测试页。
 
-```json
-{"text":"Hello","source":"en","target":"zh"}
-```
+## 免费额度与安全边界
 
-- 成功时返回 `translatedText`、`source`、`target`、`requestId` 和 `provider`。
-- 文本最多 5,000 个 Unicode 字符。可使用 `en`、`zh`、`ja`、`ko` 等语言代码；`zh-TW` 暂不支持。
-- `source:"auto"` 只针对常见英文（ASCII）、中文、日文、韩文做简单检测，其他情况可能识别错误或要求明确填写语言。为了准确翻译，推荐显式传入源语言。
-- 模型是否支持特定语言组合、翻译质量、并发和免费资源的可用性需以 Cloudflare 实际运行结果为准。
+Workers Free 约 100,000 次请求/天；Workers AI Free 10,000 Neurons/天。达到免费额度时调用会失败，**不会自动切换到付费服务**。这不是无限免费翻译。Rate Limiting 只作基础防滥用，属于近似、按机房生效的限流；Turnstile 也无法保证完全阻止人工滥用。不要依赖 CORS 作为鉴权。
 
-## 前端接入状态
-
-这次只修改了 GitHub 中的 **后端源码和配置**。目前没有改动或发布原来的 Cheems HTML 网页。公开网页不能直接内嵌私人口令，需完成安全接入设计后再切换翻译入口。
+- Cloudflare [Workers AI 免费价格](https://developers.cloudflare.com/workers-ai/platform/pricing/)
+- Cloudflare [Turnstile 免费套餐](https://developers.cloudflare.com/turnstile/plans/)
+- Cloudflare [Turnstile 服务端验证](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)
+- Cloudflare [Workers 速率限制绑定](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/)
+- Cloudflare [Workers 静态资源配置](https://developers.cloudflare.com/workers/static-assets/binding/)
 
 ## 本地检查
 
-需要 Node.js 环境。运行 `npm run check` 检查 JavaScript 语法；可用 `npm run dev` 调试（Workers AI 请求仍通过 Cloudflare 账号的资源配额处理）。
+运行 `npm run check` 检查 Worker 语法；`npm run dev` 进入本地开发。
