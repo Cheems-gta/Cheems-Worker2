@@ -2570,7 +2570,7 @@ function initCheemsLocalTranslator(){
  const widgetBox=byId('cheemsTurnstileBox'),hint=byId('cheemsVerificationHint');
  let job=null, timer=null, widgetId=null, turnstileToken='', config=null;
  // When deployed to the existing Worker, requests remain same-origin and need no CORS configuration.
- const apiRoot=location.hostname==='silent-flower-7f86.roggranny.workers.dev'?'':
+ const apiRoot=(location.hostname==='silent-flower-7f86.roggranny.workers.dev'||location.hostname==='cheems.win'||location.hostname==='www.cheems.win')?'':
    'https://silent-flower-7f86.roggranny.workers.dev';
  const say=s=>{if(st.isConnected)st.textContent=s};
  const clearResult=()=>{if(out.isConnected)out.textContent='翻译结果显示在这里。'};
