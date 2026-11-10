@@ -47,19 +47,49 @@ async function readBody(request) {
   return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
 }
 
+
+async function verifyTurnstile(token, request, env) {
+  if (typeof token !== 'string' || token.length < 1 || token.length > 2048) return false;
+  const endpoint = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+  const body = new URLSearchParams({ secret: env.TURNSTILE_SECRET, response: token });
+  const ip = request.headers.get('CF-Connecting-IP');
+  if (ip) body.set('remoteip', ip);
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) return false;
+    const check = await response.json();
+    if (!check?.success || check.action !== 'cheems_translate') return false;
+    const validHosts = new Set([
+      new URL(request.url).hostname,
+      ...(env.TURNSTILE_HOSTNAMES || '').split(',').map(s => s.trim()).filter(Boolean),
+    ]);
+    if (!check.hostname || !validHosts.has(check.hostname)) return false;
+    const origin = request.headers.get('Origin');
+    if (origin && new URL(origin).hostname !== check.hostname) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function translate(request, env, headers) {
   if (!env.AI) {
     return json({ error: 'AI_NOT_CONFIGURED', message: '请在 wrangler.jsonc 中配置 Workers AI binding 并重新部署。' }, 503, headers);
   }
-  // Remain private by default to protect the shared daily free quota.
-  if (!env.ACCESS_TOKEN) {
-    return json({ error: 'ACCESS_TOKEN_NOT_CONFIGURED', message: '请在 Worker Secrets 中设置随机 ACCESS_TOKEN。' }, 503, headers);
+  // A private bearer token is for the site owner; public visitors use Turnstile.
+  const bearer = request.headers.get('Authorization') || '';
+  const ownerAllowed = Boolean(env.ACCESS_TOKEN && bearer.startsWith('Bearer ') &&
+    (await hash(bearer)) === (await hash(`Bearer ${env.ACCESS_TOKEN}`)));
+  if (bearer && !ownerAllowed) return json({ error: 'UNAUTHORIZED' }, 401, headers);
+  const publicEnabled = Boolean(env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET && env.TRANSLATE_RATE_LIMITER);
+  if (!ownerAllowed && !publicEnabled) {
+    return json({ error: 'PUBLIC_TRANSLATION_DISABLED', message: '公开翻译尚未启用，请使用站长口令或稍后再试。' }, 403, headers);
   }
-  const received = request.headers.get('Authorization') || '';
-  const [actual, expected] = await Promise.all([
-    hash(received), hash(`Bearer ${env.ACCESS_TOKEN}`),
-  ]);
-  if (actual !== expected) return json({ error: 'UNAUTHORIZED' }, 401, headers);
   if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') {
     return json({ error: 'JSON_REQUIRED' }, 415, headers);
   }
@@ -74,9 +104,22 @@ async function translate(request, env, headers) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return json({ error: 'INVALID_REQUEST' }, 400, headers);
   }
-  const { text, source = 'auto', target = 'zh' } = body;
-  if (typeof text !== 'string' || !text.trim() || [...text].length > 5000) {
-    return json({ error: 'INVALID_TEXT', message: '请输入 1–5000 个字符。' }, 400, headers);
+  const { text, source = 'auto', target = 'zh', turnstileToken } = body;
+  const maxChars = ownerAllowed ? 5000 : 500;
+  if (typeof text !== 'string' || !text.trim() || [...text].length > maxChars) {
+    return json({ error: 'INVALID_TEXT', message: `请输入 1–${maxChars} 个字符。` }, 400, headers);
+  }
+  if (!ownerAllowed) {
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+    try {
+      const quota = await env.TRANSLATE_RATE_LIMITER.limit({ key: ip });
+      if (!quota.success) return json({ error: 'RATE_LIMITED', message: '请求过于频繁，请稍后重试。' }, 429, headers);
+    } catch {
+      return json({ error: 'RATE_LIMIT_UNAVAILABLE' }, 503, headers);
+    }
+    if (!(await verifyTurnstile(turnstileToken, request, env))) {
+      return json({ error: 'VERIFY_FAILED', message: '人机验证未通过或已过期，请重试。' }, 403, headers);
+    }
   }
 
   const languages = new Set(['zh', 'en', 'ja', 'ko', 'fr', 'es', 'it', 'de', 'tr', 'ru', 'pt', 'vi', 'id', 'th', 'ms', 'ar', 'hi']);
@@ -203,6 +246,17 @@ export default {
     }
     if (origin) headers['Access-Control-Allow-Origin'] = origin;
     if (request.method === 'GET' && url.pathname === '/test') return testPage();
+    if (request.method === 'GET' && url.pathname === '/api/config') {
+      const publicEnabled = Boolean(env.AI && env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET && env.TRANSLATE_RATE_LIMITER);
+      return json({
+        ok: true,
+        publicEnabled,
+        sitekey: publicEnabled ? env.TURNSTILE_SITE_KEY : null,
+        publicMaxChars: 500,
+        privateEnabled: Boolean(env.AI && env.ACCESS_TOKEN),
+        provider: 'cloudflare-workers-ai',
+      }, 200, headers);
+    }
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health' || url.pathname === '/api/health')) {
       return json({
         ok: true,
@@ -210,6 +264,7 @@ export default {
         provider: 'cloudflare-workers-ai',
         model,
         translationConfigured: Boolean(env.AI && env.ACCESS_TOKEN),
+        publicEnabled: Boolean(env.AI && env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET && env.TRANSLATE_RATE_LIMITER),
       }, 200, headers);
     }
     if (url.pathname !== '/api/translate') return json({ error: 'NOT_FOUND' }, 404, headers);
