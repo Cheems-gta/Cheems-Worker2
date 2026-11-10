@@ -110,6 +110,88 @@ async function translate(request, env, headers) {
   }
 }
 
+
+function testPage() {
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Cheems 免费翻译测试</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui,-apple-system,sans-serif; }
+body { max-width:650px; padding:24px 18px; margin:0 auto; background:#101725; color:#f0f5ff; }
+h1 {font-size:1.7rem;margin:1rem 0 .5rem}
+p {color:#b9c8e0;line-height:1.7}
+label {display:block;margin:14px 0 6px;font-weight:650}
+input,select,textarea {box-sizing:border-box;width:100%;font:inherit;background:#1c2840;color:#fff;border:1px solid #566984;border-radius:12px;padding:12px}
+textarea {min-height:110px;resize:vertical}
+.row {display:flex;gap:12px}.row>div {flex:1}
+button {background:#6f9fff;color:#091326;border:0;border-radius:12px;font:inherit;font-weight:bold;padding:13px 18px;margin-top:18px;width:100%;cursor:pointer}
+button:disabled {opacity:.6}
+#result {white-space:pre-wrap;word-break:break-word;border:1px solid #53627e;padding:14px;border-radius:12px;min-height:55px}
+.note {font-size:.88rem}
+</style>
+</head>
+<body>
+<h1>🐕 Cheems 翻译测试</h1>
+<p>使用 Cloudflare 免费 Workers AI。请在<strong>你自己的 Worker 域名</strong>上使用本页面；口令只用于本次请求，不会保存在浏览器存储中。</p>
+<form id="form">
+<label for="token">私人访问口令 ACCESS_TOKEN</label>
+<input type="password" id="token" required autocomplete="off" spellcheck="false" placeholder="输入你在 Cloudflare 设置的口令">
+<label for="text">待翻译内容</label>
+<textarea id="text" maxlength="5000" required>Good morning! Welcome to Cheems.</textarea>
+<div class="row">
+<div><label for="source">原语言</label><select id="source"><option value="en">英语</option><option value="zh">简体中文</option><option value="ja">日语</option><option value="ko">韩语</option><option value="fr">法语</option><option value="es">西班牙语</option></select></div>
+<div><label for="target">目标语言</label><select id="target"><option value="zh">简体中文</option><option value="en">英语</option><option value="ja">日语</option><option value="ko">韩语</option><option value="fr">法语</option><option value="es">西班牙语</option></select></div>
+</div>
+<button id="submit" type="submit">开始翻译</button>
+</form>
+<h2>结果</h2>
+<div id="result" role="status" aria-live="polite">尚未测试。</div>
+<p class="note">免费额度用完可能会报错。请勿把口令发给任何人或放进公开网站代码。</p>
+<script>
+const form = document.getElementById('form');
+const result = document.getElementById('result');
+const button = document.getElementById('submit');
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  button.disabled = true;
+  result.textContent = '翻译中…';
+  try {
+    const response = await fetch('/api/translate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + document.getElementById('token').value
+      },
+      body: JSON.stringify({
+        text: document.getElementById('text').value,
+        source: document.getElementById('source').value,
+        target: document.getElementById('target').value
+      }),
+    });
+    const data = await response.json();
+    result.textContent = response.ok ? data.translatedText : ('错误 ' + response.status + ': ' + (data.message || data.error || '未知问题'));
+  } catch {
+    result.textContent = '请求失败，请检查网络后重试。';
+  } finally {
+    button.disabled = false;
+  }
+});
+</script>
+</body>
+</html>`;
+  return new Response(html, { headers: {
+    'Content-Type':'text/html; charset=utf-8',
+    'Cache-Control':'no-store',
+    'X-Content-Type-Options':'nosniff',
+    'Referrer-Policy':'no-referrer',
+    'Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  }});
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -120,6 +202,7 @@ export default {
       return json({ error: 'ORIGIN_NOT_ALLOWED' }, 403, headers);
     }
     if (origin) headers['Access-Control-Allow-Origin'] = origin;
+    if (request.method === 'GET' && url.pathname === '/test') return testPage();
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health' || url.pathname === '/api/health')) {
       return json({
         ok: true,
